@@ -30,6 +30,7 @@ from .common import check_url, run_over_ssh, LoggerSuperclass, assert_types, GRN
 from .data_sources.postgresql import sql_list
 from .data_manipulation import merge_dataframes_by_columns, merge_dataframes, calculate_time_intervals, pivot_dataframe, \
     df_netcdf_normalization, floor_timestamp, ceil_timestamp, ensure_timestamp, find_first
+from .gbif import GbifClient
 from .metadata_collector import MetadataCollector, init_metadata_collector
 from .fileserver import FileServer
 from mmm.dataset import DatasetObject, DatasetBoundaries
@@ -77,6 +78,12 @@ class DataCollector(LoggerSuperclass):
         except KeyError as e:
             self.warning(f"Could not initialize Zenodo: {e.__repr__()}")
             self.zenodo = None
+
+        try:
+            self.gbif = GbifClient(self, secrets, self.fileserver, log)
+        except KeyError as e:
+            self.warning(f"Could not initialize GbifClient: {e.__repr__()}")
+            self.gbif = None
 
         self.boundaries = None
 
@@ -249,7 +256,7 @@ class DataCollector(LoggerSuperclass):
     def generate_dataset(self, dataset: str | dict, service_name: str, time_start: pd.Timestamp|str = "",
                          time_end: pd.Timestamp|str = "", fmt: str = "", overwrite=False, erddap_config=False,
                          secrets: dict=None, resources: dict = None, local=False, publish=False,
-                         limit:int = 0, no_files=False) -> List[DatasetObject,]:
+                         limit:int = 0, no_files=False, update_metadata=False) -> List[DatasetObject,]:
         """
 
         :param dataset: dataset_id or dataset configuration dict
@@ -293,7 +300,15 @@ class DataCollector(LoggerSuperclass):
         elif service_name == "zenodo":
             if not self.zenodo:
                 self.error("Zenodo not initialized!", exception=ValueError)
-            return self.zenodo.process_mmapi_dataset(conf, resources=resources, publish=publish, tstart=time_start, tend=time_end, no_files=no_files, overwrite=overwrite)
+            return self.zenodo.process_mmapi_dataset(conf, resources=resources, publish=publish, tstart=time_start,
+                                                     tend=time_end, no_files=no_files, overwrite=overwrite,
+                                                     update_metadata=update_metadata)
+        elif service_name == "gbif":
+            if not self.gbif:
+                self.error("GBIF not initialized!", exception=ValueError)
+            elif resources:
+                raise ValueError("GBIF publication does not accept resources")
+            return self.gbif.process_mmapi_dataset(conf, tstart=time_start, tend=time_end, overwrite=overwrite)
 
         datasets = []
 
@@ -433,7 +448,8 @@ class DataCollector(LoggerSuperclass):
             df = None
             self.error(f"Unimplemented data type {conf['dataType']}", exception=ValueError)
 
-        if "@variables" in conf.keys():
+        variable_filter = conf.get("@variables", [])
+        if variable_filter:
             self.info(f"Filtering variables, keeping: {conf['@variables']}")
             keep_vars = ["time", "depth", "latitude", "longitude", "sensor_id", "platform_id", "field_of_view"] + conf["@variables"]
             for col in df.columns:
@@ -444,7 +460,6 @@ class DataCollector(LoggerSuperclass):
                     del df[col]
                     if col + "_QC" in df.columns:
                         del df[col + "_QC"]
-
 
         return df.sort_index(ascending=True)
 

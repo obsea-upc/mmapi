@@ -22,14 +22,14 @@ import os
 
 # Structure to store the generated resources. Some datasets may have dependencies
 
-# TODO fix broken --overwrite flag
 # TODO implement last (e.g. last month)
 # TODO implement current (e.g. this month)
 
 
 def generate_dataset(dataset_id: str, service_name: str, time_start: pd.Timestamp, time_end: pd.Timestamp, secrets,
                      log: logging.Logger, format:str= "", verbose=False, erddap_config=False, overwrite=False,
-                     resources=[], local=False, publish=False, limit:int=0, no_files=False) :
+                     resources=[], local=False, publish=False, limit:int=0, no_files=False,
+                     update_metadata=False) :
     """
     Generate a dataset following the configuration in the metadata database dataset register.
     :param dataset_id: id of the dataset register
@@ -55,7 +55,7 @@ def generate_dataset(dataset_id: str, service_name: str, time_start: pd.Timestam
 
     dc.generate_dataset(dataset_id, service_name, time_start, time_end, fmt=format, secrets=secrets, limit=limit,
                         overwrite=overwrite, erddap_config=erddap_config, resources=resources, local=local,
-                        publish=publish, no_files=no_files)
+                        publish=publish, no_files=no_files, update_metadata=update_metadata)
 
 def list_datasets(secrets, verbose=False):
     with open(secrets) as f:
@@ -83,6 +83,8 @@ if __name__ == "__main__":
     argparser.add_argument("-e", "--erddap", help="Configure dataset in erddap", action="store_true")
     argparser.add_argument("-r", "--resources", help="Generate only resources within list", type=str, nargs="+")
     argparser.add_argument("-o", "--overwrite", help="Overwrite existing datasets", action="store_true")
+    argparser.add_argument("-u", "--update-metadata", help="Update the metadata (only implemented in Zenodo)", action="store_true")
+
     argparser.add_argument("-s", "--secrets", help="Another argument", type=str, required=False,
                            default="secrets.yaml")
     argparser.add_argument("-t", "--time-range", help="Time range with ISO notation, like 2022-01-01/2023-01-01",
@@ -124,4 +126,5 @@ if __name__ == "__main__":
     for service in args.services:
         generate_dataset(args.dataset_id, service, tstart, tend, args.secrets, log, format=args.format,
                          verbose=args.verbose, erddap_config=args.erddap, overwrite=args.overwrite,
-                         resources=args.resources, local=args.local, publish=args.publish, limit=args.limit, no_files=args.no_files)
+                         resources=args.resources, local=args.local, publish=args.publish, limit=args.limit,
+                         no_files=args.no_files, update_metadata=args.update_metadata)

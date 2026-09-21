@@ -484,6 +484,17 @@ zenodo_resource = {
     "required": ["link", "access_right"]
 }
 
+# GBIF Resources are supposed to be registered in Zenodo.
+# GBIF client always looks for DwC resources in fileserver, no need to linke them
+gbif_exporter_conf = {
+    "type": "object",
+    "properties": {
+        "installation": {"type": "string", "definition": "link pointing to the online resource"}
+    },
+    "additionalProperties": False,
+    "required": ["installation"]
+}
+
 fileserver_exporter_conf = {
     "type": "object",
     "properties": {
@@ -549,7 +560,7 @@ zenodo_exporter_conf = {
 
 
 # Dataset services supported by MMAPI
-valid_dataset_services = ["fileserver", "erddap", "ckan", "zenodo"]
+valid_dataset_services = ["fileserver", "erddap", "ckan", "zenodo", "gbif"]
 valid_dataset_levels = ["L0", "L1", "L2", "L3"]
 
 __datasets = {
@@ -616,7 +627,8 @@ __datasets = {
                 "fileserver": fileserver_exporter_conf,
                 "ckan": ckan_exporter_conf,
                 "erddap": erddap_exporter_conf,
-                "zenodo": zenodo_exporter_conf
+                "zenodo": zenodo_exporter_conf,
+                "gbif": gbif_exporter_conf,
             },
             "required": []
         },

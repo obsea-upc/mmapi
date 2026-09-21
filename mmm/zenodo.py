@@ -233,7 +233,8 @@ class ZenodoClient(LoggerSuperclass):
                               tstart: pd.Timestamp|str="",
                               tend: pd.Timestamp|str="",
                               no_files=False,
-                              overwrite=False) -> list:
+                              overwrite=False,
+                              update_metadata=False) -> list:
         """
         Entry point called from DataCollector.generate_dataset().
 
@@ -353,8 +354,8 @@ class ZenodoClient(LoggerSuperclass):
 
         # files, doi, zenodo_record, linked_resource, source_service = \
         for resources in zenodo_resources:
-            for resource in resources:
-                self.info(resource)
+            for zr in resources:
+                self.info(zr)
 
             doi = resources[0].doi
             if doi and not overwrite:
@@ -408,6 +409,9 @@ class ZenodoClient(LoggerSuperclass):
                 self.info("No previous record detected. Creating new draft.")
                 draft = self.rdm_create_draft_record(api_base, token, payload_create)
                 record_id = draft["id"]
+                # Store the draft id right away, so that if this run fails later (e.g. during
+                # uploads) the next run detects and resumes this draft instead of creating a new one
+                self.store_zenodo_record(str(record_id), resources)
 
             else:
                 if doi:
@@ -428,6 +432,16 @@ class ZenodoClient(LoggerSuperclass):
 
                 else:
                     self.info(f"Draft record detected ({zenodo_record}). Updating draft.")
+                    # An interrupted run may leave initiated-but-never-uploaded ('pending') files.
+                    # Zenodo returns 500 on GET/PUT of a draft in that state, so remove them first
+                    # (they hold no content and will be re-uploaded below). Files already committed
+                    # ('completed') don't need to be uploaded again.
+                    for f in self.rdm_list_draft_files(api_base, token, zenodo_record):
+                        if f.get("status") == "completed" and f.get("checksum"):
+                            uploaded_files[f["key"]] = f["checksum"].split(":")[1]
+                        elif f.get("status") == "pending":
+                            self.warning(f"Removing pending (not uploaded) file {f['key']} from draft {zenodo_record}")
+                            self.rdm_delete_draft_file(api_base, token, zenodo_record, f["key"])
                     draft = self.rdm_update_draft_record(api_base, token, int(zenodo_record), payload_update)
                     record_id = draft["id"]
 
@@ -521,7 +535,7 @@ class ZenodoClient(LoggerSuperclass):
 
         self.mc.update_zenodo_record(dataset_id, resource_id, service, data_from, data_to, zenodo_record)
         for zr in resources:
-            zr.zenodo_record = str(zr.zenodo_record)
+            zr.zenodo_record = zenodo_record
 
 
     def store_doi(self, doi: str, resources: List[ZenodoResource]):
@@ -542,7 +556,7 @@ class ZenodoClient(LoggerSuperclass):
 
         self.mc.update_doi(dataset_id, resource_id, service, data_from, data_to, doi)
         for zr in resources:
-            zr.zenodo_record = str(zr.zenodo_record)
+            zr.doi = doi
 
     def build_related_identifiers(self, dataset_conf: dict) -> list[str]:
         related_identifiers = []
@@ -1211,7 +1225,6 @@ class ZenodoClient(LoggerSuperclass):
         assert_type(resources, list)
         [assert_type(x, ZenodoResource) for x in resources]
         key = "@temporal_coverage@"
-        if key not in text: return text
 
         time_mins = [z.time_min for z in resources]
         time_maxs = [z.time_max for z in resources]
@@ -1301,4 +1314,5 @@ class ZenodoClient(LoggerSuperclass):
         md_text = self.__md_process_variable_table(md_text, dataset_conf, sensor_docs)
         html = markdown.markdown(md_text, extensions=['tables'])
         return html
+
 

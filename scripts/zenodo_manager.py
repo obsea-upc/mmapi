@@ -135,6 +135,26 @@ class ZenodoManager:
         return all_hits
 
     @staticmethod
+    def _is_never_published(hit: dict) -> bool:
+        """
+        True if the hit is a draft that has never been published.
+
+        Zenodo's /user/records returns the legacy deposit serialization,
+        which has no 'is_draft'/'is_published' fields (and ignores the
+        'is_published' query param). Instead it exposes:
+          - status: 'draft' | 'published'
+          - state: 'unsubmitted' (new draft), 'inprogress' (published
+            record with an open edit), 'done' (published)
+          - submitted: False only for records that were never published
+        Plain InvenioRDM fields are honoured if present.
+        """
+        if "is_published" in hit and hit["is_published"] is not None:
+            return not hit["is_published"]
+        if "submitted" in hit:
+            return not hit["submitted"]
+        return hit.get("state") == "unsubmitted" or bool(hit.get("is_draft", False))
+
+    @staticmethod
     def _filter_by_ids(items: list[dict], filter_ids: list[str], id_extractor) -> list[dict]:
         """Keeps only items whose extracted id is in filter_ids (as strings)."""
         if not filter_ids:
@@ -180,19 +200,23 @@ class ZenodoManager:
         """
         Lists unpublished draft records owned by the current user.
 
-        Uses 'is_draft' as the source of truth (defaulting missing/None
-        values to False) since not every hit reliably carries the
-        'is_published' field.
+        Published records with a pending edit (state 'inprogress') are
+        not included, since they are still published records.
         """
         url = f"{self.url}/user/records"
-        params = {"is_published": "false", "size": 50, "page": 1}
+        params = {"size": 50, "page": 1}
         candidates = self._paginate(url, params)
 
-        drafts = [d for d in candidates if bool(d.get("is_draft", False))]
+        drafts = [d for d in candidates if self._is_never_published(d)]
 
+        for d in candidates:
+            if not self._is_never_published(d) and d.get("state") == "inprogress":
+                self.log.debug(
+                    f"Skipping published record {d.get('id')} with an unpublished edit in progress."
+                )
         if len(drafts) != len(candidates):
             self.log.debug(
-                f"Filtered out {len(candidates) - len(drafts)} non-draft item(s) "
+                f"Filtered out {len(candidates) - len(drafts)} published item(s) "
                 f"returned by the server."
             )
 
@@ -229,16 +253,13 @@ class ZenodoManager:
         """
         Lists published records owned by the current user.
 
-        Uses 'is_draft' (defaulting missing/None to False) as the
-        source of truth for "not a draft" rather than requiring
-        'is_published' to be strictly True, since that field isn't
-        consistently present on every hit.
+        Includes published records that have an edit in progress.
         """
         url = f"{self.url}/user/records"
-        params = {"is_published": "true", "size": 50, "page": 1}
+        params = {"size": 50, "page": 1}
         candidates = self._paginate(url, params)
 
-        records = [r for r in candidates if not bool(r.get("is_draft", False))]
+        records = [r for r in candidates if not self._is_never_published(r)]
 
         records = self._filter_by_ids(records, filter_ids, lambda r: r.get("id"))
         self.log.info(f"Found [bold cyan]{len(records)}[/bold cyan] published record(s).")

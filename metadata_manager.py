@@ -12,7 +12,7 @@ created: 21/09/2023
 from argparse import ArgumentParser, ArgumentError
 from mmm import setup_log
 from mmm.common import ask_user_input, dir_list, file_list, assert_type
-from mmm.metadata_collector import MetadataCollector, init_metadata_collector
+from mmm.metadata_collector import MetadataCollector, init_metadata_collector, mmapi_collection_names
 from datetime import datetime
 import yaml
 import rich
@@ -78,6 +78,25 @@ def process_markdown_to_json(doc: dict, filename: str, collection: str):
 
     return doc
 
+def path_to_collection(path: str):
+    col = ""
+
+    if "/" not in path:
+        col = path
+    else:
+        # If we have a path it can be the last or the second-to-last
+        splits = path.split("/")
+        if splits[-1] in mmapi_collection_names:
+            col = splits[-1]
+        elif splits[-2] in mmapi_collection_names:
+            col = splits[-2]
+
+    if col in mmapi_collection_names:
+        return col
+
+    else:
+        raise ValueError(f"COuld not find collection in path '{path}'")
+
 
 
 def load_doc(filename: str, collection: str):
@@ -94,7 +113,7 @@ def load_doc(filename: str, collection: str):
         except json.decoder.JSONDecodeError as e:
             rich.print(f"[red]ERROR!! could not load file {filename}, JSON decode error")
             raise e
-
+    collection = path_to_collection(collection)
     return process_markdown_to_json(filedata, filename, collection)
 
 

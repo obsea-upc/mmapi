@@ -25,7 +25,9 @@ from mmm import setup_log, SensorThingsApiDB
 from mmm.common import LoggerSuperclass, PRL, RST, GRN, assert_type
 from mmm.metadata_collector import init_metadata_collector
 from zabbix_utils import ZabbixAPI, Sender, ItemValue
+import zabbix_utils
 import time
+import rich
 import logging
 
 
@@ -50,12 +52,13 @@ def gen_zbx_key(sensor_id, varname, data_type, average=""):
 
 
 class ZabbixUpdater(LoggerSuperclass):
-    def __init__(self, secrets: dict, log: logging.Logger):
+    def __init__(self, secrets: dict, log: logging.Logger, sensor_subset=[]):
 
         assert_type(secrets, dict)
         assert_type(log, logging.Logger)
+        assert_type(sensor_subset, list)
+        [assert_type(sensor, str) for sensor in sensor_subset]
         LoggerSuperclass.__init__(self, log, name="ZBX", colour=PRL)
-
 
         mc = init_metadata_collector(secrets, log=log)
 
@@ -67,6 +70,10 @@ class ZabbixUpdater(LoggerSuperclass):
         self.info("Retrieving data from MetadataCollector")
 
         sensors = mc.get_documents("sensors")
+
+        if sensor_subset:
+            sensors = [s for s in sensors if s["#id"] in sensor_subset]
+
         self.sensors = sensors
         self.active_sensors = []  # list of sensors providing real-time data currently deployed
         stations = mc.get_documents("stations")
@@ -102,6 +109,12 @@ class ZabbixUpdater(LoggerSuperclass):
             order by  "DATASTREAMS"."ID" asc
             ;"""
         )
+
+
+        if sensor_subset:
+            df = df[df["sensor_id"].isin(sensor_subset)]
+
+        self.debug(f"\n{df}")
         self.datastreams = df
         self.register_sensors(sensors)
         self.update_sensor_status()
@@ -223,6 +236,9 @@ class ZabbixUpdater(LoggerSuperclass):
                     "host": sensor['#id'],
                     "status": str(int(active)),
                     "groups":  [{"groupid": station_host_groupid}],
+                    "tags": [
+                        {"tag": "instrumentType", "value": sensor["instrumentType"]["label"]}
+                    ],
                 }
                 self.info(f"Registering host={GRN}'{sensor_id}'{RST} with enabled={active}")
                 host = self.api.host.create(host)
@@ -291,8 +307,12 @@ class ZabbixUpdater(LoggerSuperclass):
         if period:  # Calculate specific no data time for average data
             period_seconds = int(pd.to_timedelta(period).to_numpy()//1e9)
             no_data_time = 2*period_seconds
+        try:
+            self.api.item.create(item)
+        except zabbix_utils.exceptions.APIRequestError:
+            self.warning(f"Cannot register '{key}', maybe it is duplicated?")
+            return
 
-        self.api.item.create(item)
         # Create NoData trigger
         trigger = {
             "description": f"{key} no data",
@@ -348,7 +368,9 @@ class ZabbixUpdater(LoggerSuperclass):
         if data_type == "detections":
             # Do not inject detections
             return
-        self.info(f"{key}: {len(df)} data points")
+        last_t = pd.Timestamp(df["timestamp"].values[-1]).strftime("%Y-%m-%dT%H:%M:%S")
+        last_v = df["value"].values[-1]
+        self.info(f"{key}: {len(df)} data points (last {last_t}  {last_v})")
         self.send_from_df(df, sensor_id, key)
 
 
@@ -364,14 +386,16 @@ class ZabbixUpdater(LoggerSuperclass):
 
         df = self.sta.dataframe_from_query(
             f'select "PHENOMENON_TIME_START" as timestamp, "{column}" as value from "OBSERVATIONS" '             
-            f'where "DATASTREAM_ID" = {datastream_id} '
+            f'where "DATASTREAM_ID" = {datastream_id    } '
             f"and \"PHENOMENON_TIME_START\" between '{from_time}' and '{end_time}';"
         )
 
         if df.empty:
             self.debug(f"{key}: no data")
             return
-        self.info(f"{key}: {len(df)} data points")
+        last_t = pd.Timestamp(df["timestamp"].values[-1]).strftime("%Y-%m-%dT%H:%M:%S")
+        last_v = df["value"].values[-1]
+        self.info(f"{key}: {len(df)} data points (last {last_t}  {last_v})")
         self.send_from_df(df, sensor_id, key)
 
 
@@ -393,6 +417,7 @@ if __name__ == "__main__":
     argparser.add_argument("-s", "--secrets", help="Another argument", type=str, required=False, default="secrets.yaml")
     argparser.add_argument("-v", "--verbose", help="verbose output", action="store_true")
     argparser.add_argument("-p", "--period", help="Period to be processed", default="30min", type=str)
+    argparser.add_argument("-S", "--sensors", help="Sensor subset", nargs="+", type=str, default=[])
 
     args = argparser.parse_args()
 
@@ -407,6 +432,6 @@ if __name__ == "__main__":
 
     log = setup_log("zabbix_updater", log_level=log_level)
 
-    zbx = ZabbixUpdater(secrets, log)
+    zbx = ZabbixUpdater(secrets, log, sensor_subset=args.sensors)
     zbx.send_last_data(args.period)
     log.info(f"Total elapsed time={time.time() - t:.02f} seconds")

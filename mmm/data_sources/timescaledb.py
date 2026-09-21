@@ -174,7 +174,7 @@ class TimescaleDB(LoggerSuperclass):
             return 0, 0, 0
         else:
             ratio = bytes_before/bytes_after
-            return round(bytes_before/1e6, 2), round(bytes_after/1e6, 2), round(ratio, 2)
+            return bytes_before, bytes_after, round(ratio, 2)
 
     def insert_to_timeseries(self,  timestamp: str, value: float, qc_flag: int, datastream_id: int):
         """

@@ -118,6 +118,9 @@ def postgres_results_to_dict(results, time_format="%Y-%m-%dT%H:%M:%SZ"):
 
     return docs
 
+mmapi_collection_names = ["sensors", "stations", "variables", "qualityControl", "people", "units", "processes",
+                                 "organizations", "datasets", "operations", "activities", "projects", "resources",
+                                 "programmes"]
 
 class MetadataCollector(LoggerSuperclass):
     def __init__(self, connection: dict, default_author: str, organization: str, log: logging.Logger):
@@ -129,9 +132,7 @@ class MetadataCollector(LoggerSuperclass):
         """
 
         # To create new collections, add them here
-        self.collection_names = ["sensors", "stations", "variables", "qualityControl", "people", "units", "processes",
-                                 "organizations", "datasets", "operations", "activities", "projects", "resources",
-                                 "programmes"]
+        self.collection_names = mmapi_collection_names
 
         LoggerSuperclass.__init__(self, log, "MC", PRL)
         self.info("Initializing MetadataCollector")
@@ -1420,6 +1421,36 @@ class MetadataCollector(LoggerSuperclass):
         query = f"""         
             UPDATE {self.dataset_registry_table}
             SET modification_date = '{now}', zenodo_record='{zenodo_record}' 
+            WHERE
+             dataset_id='{dataset_id}' and 
+             resource_id='{resource_id}' and 
+             service='{service}' and 
+             data_from in {sql_list(data_from)} and 
+             data_to in {sql_list(data_to)}
+            ;"""
+
+        self.db.exec_query(query, fetch=False)
+
+
+    def update_gbif_record(self, dataset_id: str, resource_id: str, service: str, data_from: List[pd.Timestamp], data_to: List[pd.Timestamp], gbif_record: str):
+        assert_type(dataset_id, str)
+        assert_type(resource_id, str)
+        assert_type(service, str)
+        assert_type(data_from, list)
+        assert_type(data_to, list)
+        [assert_type(t, pd.Timestamp) for t in data_from]
+        [assert_type(t, pd.Timestamp) for t in data_from]
+        assert_type(gbif_record, str)
+
+        now = pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        data_from = [t.strftime("%Y-%m-%dT%H:%M:%SZ") for t in data_from]
+        data_to = [t.strftime("%Y-%m-%dT%H:%M:%SZ") for t in data_to]
+        self.info(f"UPDATE gbif_record='{gbif_record}'for dataset_id='{dataset_id}' and resource_id='{resource_id}' from {data_from} to {data_to}")
+
+        query = f"""         
+            UPDATE {self.dataset_registry_table}
+            SET modification_date = '{now}', gbif_record='{gbif_record}' 
             WHERE
              dataset_id='{dataset_id}' and 
              resource_id='{resource_id}' and 

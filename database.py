@@ -9,6 +9,8 @@ license: MIT
 created: 21/09/2023
 """
 from argparse import ArgumentParser
+
+from mmm.common import human_readable_bytes
 from mmm.metadata_collector import init_metadata_collector
 from mmm import SensorThingsApiDB
 import yaml
@@ -48,27 +50,27 @@ if __name__ == "__main__":
         dt_size = db.value_from_query("SELECT hypertable_size('detections');")
 
 
-        rich.print(f"OBSERVATIONS size {obs_size/1e6:.02f} MB for {obs_count} lines")
-        rich.print(f"timeseries   size {ts_size /1e6:.02f} MB for {ts_count} lines")
-        rich.print(f"profiles     size {pr_size /1e6:.02f} MB for {pr_count} lines")
-        rich.print(f"profiles     size {dt_size / 1e6:.02f} MB for {dt_count} lines")
+        rich.print(f"OBSERVATIONS size {human_readable_bytes(obs_size)} for {obs_count} lines")
+        rich.print(f"timeseries   size {human_readable_bytes(ts_size)} for {ts_count} lines")
+        rich.print(f"profiles     size {human_readable_bytes(pr_size)} for {pr_count} lines")
+        rich.print(f"detections     size {human_readable_bytes(dt_size)} MB for {dt_count} lines")
 
         before, after, ratio = db.timescale.compression_stats("timeseries")
         rich.print("Hypertable 'timeseries'")
-        rich.print(f"    before compression: {before} MBytes")
-        rich.print(f"     after compression: {after} MBytes")
+        rich.print(f"    before compression: {human_readable_bytes(before)}")
+        rich.print(f"     after compression: {human_readable_bytes(after)}")
         rich.print(f"     compression ratio: {ratio}")
 
         before, after, ratio = db.timescale.compression_stats("profiles")
         rich.print("Hypertable 'profiles'")
-        rich.print(f"    before compression: {before} MBytes")
-        rich.print(f"     after compression: {after} MBytes")
+        rich.print(f"    before compression: {human_readable_bytes(before)}")
+        rich.print(f"     after compression: {human_readable_bytes(after)}")
         rich.print(f"     compression ratio: {ratio}")
 
         before, after, ratio = db.timescale.compression_stats("detections")
         rich.print("Hypertable 'detections'")
-        rich.print(f"    before compression: {before} MBytes")
-        rich.print(f"     after compression: {after} MBytes")
+        rich.print(f"    before compression: {human_readable_bytes(before)}")
+        rich.print(f"     after compression: {human_readable_bytes(after)}")
         rich.print(f"     compression ratio: {ratio}")
 
     elif args.compress:
@@ -76,22 +78,22 @@ if __name__ == "__main__":
         db.timescale.compress_all("profiles", args.compress)
         before, after, ratio = db.timescale.compression_stats("profiles")
         rich.print("Hypertable 'profiles'")
-        rich.print(f"    before compression: {before} MBytes")
-        rich.print(f"     after compression: {after} MBytes")
+        rich.print(f"    before compression: {human_readable_bytes(before)}")
+        rich.print(f"     after compression: {human_readable_bytes(after)}")
         rich.print(f"     compression ratio: {ratio}")
 
         rich.print("Compressing 'timeseries'")
         db.timescale.compress_all("timeseries", args.compress)
         before, after, ratio = db.timescale.compression_stats("timeseries")
         rich.print("Hypertable 'timeseries'")
-        rich.print(f"    before compression: {before} MBytes")
-        rich.print(f"     after compression: {after} MBytes")
+        rich.print(f"    before compression: {human_readable_bytes(before)}")
+        rich.print(f"     after compression: {human_readable_bytes(after)}")
         rich.print(f"     compression ratio: {ratio}")
 
         rich.print("Compressing 'detections'")
         db.timescale.compress_all("detections", args.compress)
         before, after, ratio = db.timescale.compression_stats("detections")
         rich.print("Hypertable 'detections'")
-        rich.print(f"    before compression: {before} MBytes")
-        rich.print(f"     after compression: {after} MBytes")
+        rich.print(f"    before compression: {human_readable_bytes(before)}")
+        rich.print(f"     after compression: {human_readable_bytes(after)}")
         rich.print(f"     compression ratio: {ratio}")
