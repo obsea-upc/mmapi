@@ -1087,6 +1087,7 @@ class DataCollector(LoggerSuperclass):
                 "network": "EMSO",
                 "data_mode": dm,
                 "projects": "",
+                "doi": self.mc.get_dataset_dois(dataset, tstart=tstart, tend=tend),
                 "project_codes": "",
                 "principal_investigator": pi["name"],
                 "principal_investigator_email": pi["email"],
@@ -1098,7 +1099,6 @@ class DataCollector(LoggerSuperclass):
             "sensors": {},
             "variables": {}
         }
-
 
         optional_args = {
             "oso/regionalFacility/label": "emso_regional_facility_name",

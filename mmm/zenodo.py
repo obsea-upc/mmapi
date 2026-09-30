@@ -261,10 +261,14 @@ class ZenodoClient(LoggerSuperclass):
         if dataset_conf["export"]["zenodo"].get("yearlyRecord", False):
             self.info("Creating one record for every year!")
 
+        if update_metadata:
+            self.info("Updating metadata of published records (no new version will be created)")
+
         results = []
         for resource in zenodo_resources:
             self.info(f"Processing Zenodo resource {dataset_conf['#id']}")
-            result = self.process_zenodo_resource(dataset_conf, resource, publish=publish, tstart=tstart, tend=tend, overwrite=overwrite)
+            result = self.process_zenodo_resource(dataset_conf, resource, publish=publish, tstart=tstart, tend=tend,
+                                                  overwrite=overwrite, update_metadata=update_metadata)
             results.append(result)
 
         return results
@@ -331,10 +335,12 @@ class ZenodoClient(LoggerSuperclass):
 
 
     def process_zenodo_resource(self,dataset_conf: dict,resource: dict,publish=False,
-                                tstart: pd.Timestamp | None = None,tend: pd.Timestamp | None = None, overwrite=False) -> dict:
+                                tstart: pd.Timestamp | None = None,tend: pd.Timestamp | None = None, overwrite=False,
+                                update_metadata=False) -> dict:
         """
         Logic:
         - if CLI says sandbox/prod, use that environment
+        - if update_metadata is set -> edit the published record in place (same version, same DOI)
         - if state exists in that environment:
             - published or DOI exists -> create new version
             - otherwise -> update draft
@@ -343,9 +349,6 @@ class ZenodoClient(LoggerSuperclass):
         """
         dataset_id = dataset_conf["#id"]
         api_base = self.url
-        access_right = resource.get("access_right", "open")
-        license_id = resource.get("license", "cc-by-4.0")
-        resource_type = resource.get("resource_type", "dataset")
         token = self.token
 
         yearly_record = dataset_conf["export"]["zenodo"].get("yearlyRecord", False)
@@ -358,44 +361,26 @@ class ZenodoClient(LoggerSuperclass):
                 self.info(zr)
 
             doi = resources[0].doi
-            if doi and not overwrite:
-                self.info("Skipping registered resource")
-                continue
-
             zenodo_record = resources[0].zenodo_record
 
             assert_type(doi, str)
             assert_type(zenodo_record, str)
+
+            if update_metadata:
+                # Metadata-only update: never touches files nor creates a new version
+                self.update_record_metadata(dataset_conf, resource, resources, publish=publish)
+                continue
+
+            if doi and not overwrite:
+                self.info("Skipping registered resource")
+                continue
 
             self.info(f"Datsaet_id: {dataset_id}, DOI:{doi}, zenodo_record:{zenodo_record}")
             self.debug(f"{dataset_id} files:")
             for i, zr in enumerate(resources):
                 self.debug(f"    {i+1}/{len(resources)} - {zr.basename}")
 
-            title = dataset_conf["export"]["zenodo"].get("title", "")
-            if not title:
-                title = dataset_conf.get("title") or resource.get("title") or dataset_id
-
-            if "@year@" in title:
-                # Assuming yearly dataset
-                title = title.replace("@year@", str(resources[0].year))
-
-            payload_create = {
-                "access": self.map_access_right(access_right),
-                "files": {"enabled": True},
-                "metadata": {
-                    "title": title,
-                    "description": self.build_readme(dataset_conf, resources),
-                    "publication_date": datetime.now(timezone.utc).date().isoformat(),
-                    "publisher": "Zenodo",
-                    "resource_type": {"id": resource_type},
-                    "creators": self.build_creators(dataset_conf),
-                    'rights': [{'id': license_id}],
-                     "related_identifiers": self.build_related_identifiers(dataset_conf),
-                    "funding": self.build_grants(dataset_conf),
-                    "subjects": self.build_keywords(dataset_conf)
-                },
-            }
+            payload_create = self.build_record_payload(dataset_conf, resource, resources)
 
             payload_update = {
                 "access": payload_create["access"],
@@ -509,6 +494,151 @@ class ZenodoClient(LoggerSuperclass):
                 self.info(f"Draft kept unpublished for {dataset_id}")
                 zenodo_record = str(draft["id"])
                 self.store_zenodo_record(zenodo_record, resources)
+
+    def build_record_payload(self, dataset_conf: dict, resource: dict, resources: List[ZenodoResource]) -> dict:
+        """
+        Build the Zenodo (InvenioRDM) payload of a record from the dataset configuration.
+
+        Used both when creating/versioning a record and when updating the metadata of an
+        already published one.
+        """
+        assert_type(dataset_conf, dict)
+        assert_type(resource, dict)
+        assert_type(resources, list)
+
+        dataset_id = dataset_conf["#id"]
+        access_right = resource.get("access_right", "open")
+        license_id = resource.get("license", "cc-by-4.0")
+        resource_type = resource.get("resource_type", "dataset")
+
+        title = dataset_conf["export"]["zenodo"].get("title", "")
+        if not title:
+            title = dataset_conf.get("title") or resource.get("title") or dataset_id
+
+        if "@year@" in title:
+            # Assuming yearly dataset
+            title = title.replace("@year@", str(resources[0].year))
+
+        return {
+            "access": self.map_access_right(access_right),
+            "files": {"enabled": True},
+            "metadata": {
+                "title": title,
+                "description": self.build_readme(dataset_conf, resources),
+                "publication_date": datetime.now(timezone.utc).date().isoformat(),
+                "publisher": "Zenodo",
+                "resource_type": {"id": resource_type},
+                "creators": self.build_creators(dataset_conf),
+                'rights': [{'id': license_id}],
+                "related_identifiers": self.build_related_identifiers(dataset_conf),
+                "funding": self.build_grants(dataset_conf),
+                "subjects": self.build_keywords(dataset_conf)
+            },
+        }
+
+    def update_record_metadata(self, dataset_conf: dict, resource: dict, resources: List[ZenodoResource],
+                               publish=False) -> dict | None:
+        """
+        Update the metadata of an already published record *in place* (--update-metadata).
+
+        Contrary to the regular flow, this keeps the same record, the same version and the
+        same DOI: an edit draft is opened on the published record (POST /records/{id}/draft),
+        its metadata is replaced and the record is published again. Files are immutable on an
+        edit draft, so nothing is downloaded nor uploaded here.
+
+        Returns the published record (or the draft if publish is False), None if the resource
+        has nothing to update.
+        """
+        assert_type(resources, list)
+        [assert_type(zr, ZenodoResource) for zr in resources]
+
+        api_base = self.url
+        token = self.token
+        dataset_id = dataset_conf["#id"]
+        record_id = resources[0].zenodo_record
+        doi = resources[0].doi
+
+        if not record_id:
+            self.warning(f"{dataset_id}: no Zenodo record registered, nothing to update (publish it first)")
+            return None
+
+        if not doi:
+            self.warning(f"{dataset_id}: record {record_id} is still an unpublished draft, "
+                         f"run without --update-metadata to update it")
+            return None
+
+        self.info(f"Updating metadata of published record {record_id} (DOI {doi}), no new version will be created")
+
+        # Native InvenioRDM documents, Zenodo's legacy serialization is not valid draft input
+        published = self.rdm_get_current_version(api_base, token, record_id, accept=self.RDM_ACCEPT)
+        payload = self.build_record_payload(dataset_conf, resource, resources)
+
+        draft = self.rdm_edit_published_record(api_base, token, record_id)
+        payload_update = self.build_metadata_update_payload(published, draft, payload)
+        draft = self.rdm_update_draft_record(api_base, token, record_id, payload_update,
+                                             accept=self.RDM_ACCEPT)
+
+        if not publish:
+            self.warning(f"Edit draft for record {record_id} is NOT live, re-run with --publish to apply it "
+                         f"(a pending edit draft also prevents creating new versions of this record)")
+            return draft
+
+        pub = self.rdm_publish_record(api_base, token, record_id)
+
+        # 'doi' is top level in Zenodo's legacy serialization, under pids in the InvenioRDM one
+        published_doi = pub.get("doi") or ((pub.get("pids") or {}).get("doi") or {}).get("identifier") or doi
+        if published_doi != doi:
+            # Editing a published record must not mint a new DOI, be loud if it ever happens
+            self.warning(f"DOI changed after the metadata update: {doi} -> {published_doi}, updating registry")
+            self.store_doi(published_doi, resources)
+
+        self.info(f"METADATA UPDATED {dataset_id} record {record_id} DOI: {published_doi}")
+        self.submit_to_communities(api_base, token, str(record_id), dataset_conf)
+        return pub
+
+    def build_metadata_update_payload(self, published: dict, draft: dict, payload: dict) -> dict:
+        """
+        Merge the freshly built metadata into the metadata of an existing edit draft.
+
+        A PUT replaces the whole draft, so the fields this tool does not generate (version,
+        dates, custom fields...) would be wiped if only our own payload was sent. Start from
+        the metadata already in the draft and override the fields we manage.
+
+        publication_date is restored from the published record: build_record_payload sets it
+        to today, which would rewrite the original publication date of an already cited record.
+
+        Both documents must be the native InvenioRDM serialization. Merging Zenodo's legacy
+        one (access_right, license, grants...) would send invalid fields back to the record,
+        so refuse to build anything rather than corrupting published metadata.
+        """
+        for name, doc in (("published record", published), ("edit draft", draft)):
+            if "access" not in doc or "pids" not in doc:
+                self.error(f"Unexpected serialization of the {name}: expected InvenioRDM fields "
+                           f"(got keys {sorted(doc.keys())}). Aborting to avoid corrupting metadata.",
+                           exception=ValueError)
+
+        metadata = dict(draft.get("metadata") or {})
+        metadata.update(payload["metadata"])
+
+        publication_date = (published.get("metadata") or {}).get("publication_date")
+        if publication_date:
+            metadata["publication_date"] = publication_date
+
+        payload_update = {"metadata": metadata}
+
+        # pids hold the DOI of the published record, keep them untouched
+        if draft.get("pids"):
+            payload_update["pids"] = draft["pids"]
+
+        access = payload["access"]
+        current_access = published.get("access") or {}
+        changed = {k: v for k, v in access.items() if current_access.get(k) != v}
+        if changed:
+            self.warning(f"Access of the published record will change: "
+                         f"{ {k: current_access.get(k) for k in changed} } -> {changed}")
+        payload_update["access"] = access
+
+        return payload_update
 
     def get_uploaded_files(self, current: dict):
         files = {}
@@ -858,10 +988,17 @@ class ZenodoClient(LoggerSuperclass):
             return r.split("ror.org/", 1)[1].strip().strip("/")
         return r.strip().strip("/")
 
-    def zenodo_headers(self, token: str, json_headers: bool = False) -> dict:
+    # Zenodo serves its own legacy serialization by default (and for 'application/json'):
+    # metadata.access_right, metadata.license, files as a list, no pids/access. The native
+    # InvenioRDM document, which is what the draft endpoints expect back, needs this Accept.
+    RDM_ACCEPT = "application/vnd.inveniordm.v1+json"
+
+    def zenodo_headers(self, token: str, json_headers: bool = False, accept: str = "") -> dict:
         headers = {"Authorization": f"Bearer {token}"}
         if json_headers:
             headers["Content-Type"] = "application/json"
+        if accept:
+            headers["Accept"] = accept
         return headers
 
     PROJECTS_CACHE_TTL_DAYS = 7  # force a full cache refresh if it's older than this
@@ -970,9 +1107,9 @@ class ZenodoClient(LoggerSuperclass):
 
         return match
 
-    def rdm_get_current_version(self,api_base: str, token: str, record_id):
+    def rdm_get_current_version(self,api_base: str, token: str, record_id, accept: str = ""):
         url = f"{api_base}/records/{record_id}"
-        r = requests.get(url, headers=self.zenodo_headers(token, True), timeout=60)
+        r = requests.get(url, headers=self.zenodo_headers(token, True, accept=accept), timeout=60)
         self.http_response(r)
         return r.json()
 
@@ -982,9 +1119,38 @@ class ZenodoClient(LoggerSuperclass):
         self.http_response(r)
         return r.json()
 
-    def rdm_update_draft_record(self, api_base: str, token: str, record_id: str | int, payload: dict) -> dict:
+    def rdm_update_draft_record(self, api_base: str, token: str, record_id: str | int, payload: dict,
+                                accept: str = "") -> dict:
         url = f"{api_base}/records/{record_id}/draft"
-        r = requests.put(url, json=payload, headers=self.zenodo_headers(token, True), timeout=60)
+        r = requests.put(url, json=payload, headers=self.zenodo_headers(token, True, accept=accept), timeout=60)
+        self.http_response(r)
+        return r.json()
+
+    def rdm_edit_published_record(self, api_base: str, token: str, record_id: str | int) -> dict:
+        """
+        Open an edit draft on a published record (same record id, same version, same DOI).
+        If a draft is already open (e.g. an interrupted run) Zenodo returns that one instead
+        of failing, so this is safe to retry.
+
+        The InvenioRDM Accept header is mandatory here: asking for Zenodo's legacy
+        serialization makes this endpoint fail with a 500 while rendering the response of an
+        edit draft (a document that is is_published *and* is_draft at the same time).
+        """
+        url = f"{api_base}/records/{record_id}/draft"
+        headers = self.zenodo_headers(token, accept=self.RDM_ACCEPT)
+        r = requests.post(url, headers=headers, timeout=60)
+
+        if r.status_code >= 500:
+            # The edit draft may have been created server-side even though the response failed.
+            # Check before giving up, otherwise a retry is the only way out.
+            self.warning(f"Zenodo returned {r.status_code} opening the edit draft of {record_id}, "
+                         f"checking whether the draft exists anyway...")
+            self.warning(f"Response: {r.text}")
+            existing = requests.get(url, headers=headers, timeout=60)
+            if existing.status_code == 200:
+                self.info(f"Edit draft of record {record_id} already exists, reusing it")
+                return existing.json()
+
         self.http_response(r)
         return r.json()
 

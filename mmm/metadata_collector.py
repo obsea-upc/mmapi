@@ -1533,8 +1533,36 @@ class MetadataCollector(LoggerSuperclass):
 
         return group
 
+    def get_dataset_dois(self, dataset_conf: dict, tstart="", tend="") -> List[str]:
+        """
+        Get a list of DOIs assigned to a dataset
+        :param dataset_conf:
+        :param tstart:
+        :param tend:
+        :return:
+        """
+        dataset_id = dataset_conf["#id"]
 
+        if tstart:
+            tstart = f"and date_from >= '{tstart}'"
+        else:
+            tstart = ""
 
+        if tend:
+            tend = f"and date_from <= '{tend}'"
+        else:
+            tend = ""
+
+        dois = self.db.list_from_query(f"""
+            select distinct doi
+            from {self.dataset_registry_table}
+            where dataset_id='{dataset_id}'
+            {tstart}
+            {tend}
+            ;
+        """)
+        dois = [d for d in dois if d]
+        return dois
 
 def get_station_deployments(mc: MetadataCollector, station: dict) -> list:
     return mc.get_station_deployments(station)
