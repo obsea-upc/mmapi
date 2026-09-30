@@ -312,6 +312,8 @@ class TestMMAPI(unittest.TestCase, LoggerSuperclass):
         ]
         for collection in collections:
             docs = file_list(os.path.join("metadata", collection))
+            docs = [f for f in docs if f.endswith(".json")]
+            docs = sorted(docs)
             for doc in docs:
                 with open(doc) as f:
                     data = json.load(f)
@@ -816,6 +818,7 @@ class TestMMAPI(unittest.TestCase, LoggerSuperclass):
             foi_id = self.dc.sta.value_from_query('select "ID" from "FEATURES" limit 1;')
             d = {
                 "phenomenonTime": dates[i].strftime('%Y-%m-%dT%H:%M:%SZ'),
+                "resultTime": dates[i].strftime('%Y-%m-%dT%H:%M:%SZ'),
                 "result": path,
                 "FeatureOfInterest": {"@iot.id": foi_id}
             }

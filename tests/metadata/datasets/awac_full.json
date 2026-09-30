@@ -2,7 +2,7 @@
   "#id": "awac_full",
   "title": "AWAC current profiler data full",
   "summary": "AWAC current profiler data",
-  "keywords": [],
+  "keywords": ["physical oceanography"],
   "dataMode": "real-time",
   "@sensors": [
     "AWAC"
@@ -39,6 +39,16 @@
           "dataType": "profiles"
         }
       ]
+    },
+    "zenodo": {
+      "&readme": "readme/awac_full.md",
+      "resources": [
+        {
+          "link": "$fileserver/netcdf_dataset",
+          "access_right": "open"
+        }
+      ],
+      "communities": []
     },
     "ckan": {
       "resources": [
