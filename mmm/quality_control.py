@@ -19,7 +19,7 @@ import os
 import numpy as np
 from ioos_qc.config import QcConfig
 from mmm import MetadataCollector
-from mmm.common import assert_type, assert_types
+from mmm.common import assert_type, assert_types, strip_metadata_fields
 
 qc_flags = {
     "good": 1,
@@ -218,7 +218,7 @@ def dataset_qc(mc: MetadataCollector, sensor: str | dict, df: pd.DataFrame, save
             # get QualityControl configuration for variable
             qc_id = var["@qualityControl"]
             c = mc.get_document("qualityControl", qc_id)
-            c = mc.strip_metadata_fields(c)
+            c = strip_metadata_fields(c)
             qc_config[varname] = c
         else:
             rich.print(f"[yellow]No QC found for '{varname}'!")
@@ -226,7 +226,7 @@ def dataset_qc(mc: MetadataCollector, sensor: str | dict, df: pd.DataFrame, save
 
     if paralell:
         rich.print("[cyan]Applying Quality Control (multiprocessing)...")
-        dataframes = slice_dataframes(df, frequency="M")  # generate a dataframe for each month
+        dataframes = slice_dataframes(df, frequency="ME")  # generate a dataframe for each month
         argument_list = []
         for df in dataframes:
             argument_list.append((df, qc_config, save))
