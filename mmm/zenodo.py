@@ -1026,7 +1026,7 @@ class ZenodoClient(LoggerSuperclass):
 
         age_days = (time.time() - data["cached_at"]) / 86400
         if age_days > self.PROJECTS_CACHE_TTL_DAYS:
-            self.info(
+            self.debug(
                 f"Projects cache is {age_days:.1f} days old (> {self.PROJECTS_CACHE_TTL_DAYS}d), "
                 f"forcing a full refresh."
             )

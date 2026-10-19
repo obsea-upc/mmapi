@@ -822,7 +822,7 @@ def pivot_dataframe(df, pivot_cols, pivot_on="variable"):
             log.info("Regular pivot did not work, try pivot taking depth into account")
             df = __pivot_dataframe_depth(df, pivot_cols, pivot_on=pivot_on)
     except ValueError as e:
-        log.error("Cannot pivot table, probably due to duplicated entries, storing duplicates in DUPLICATED-ALL.csv")
+        log.error("Cannot pivot table, probably due to duplicated entries, storing duplicates in DUPLICATED.csv")
         key_cols = [c for c in df.columns if c not in pivot_cols] + [pivot_on]
         duplicates_df = df[df.duplicated(subset=key_cols, keep=False)]
         duplicates_df.to_csv("DUPLICATED.csv", index=False)

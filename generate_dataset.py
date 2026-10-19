@@ -29,7 +29,7 @@ import os
 def generate_dataset(dataset_id: str, service_name: str, time_start: pd.Timestamp, time_end: pd.Timestamp, secrets,
                      log: logging.Logger, format:str= "", verbose=False, erddap_config=False, overwrite=False,
                      resources=[], local=False, publish=False, limit:int=0, no_files=False,
-                     update_metadata=False) :
+                     update_metadata=False, data_type="") :
     """
     Generate a dataset following the configuration in the metadata database dataset register.
     :param dataset_id: id of the dataset register
@@ -55,7 +55,7 @@ def generate_dataset(dataset_id: str, service_name: str, time_start: pd.Timestam
 
     dc.generate_dataset(dataset_id, service_name, time_start, time_end, fmt=format, secrets=secrets, limit=limit,
                         overwrite=overwrite, erddap_config=erddap_config, resources=resources, local=local,
-                        publish=publish, no_files=no_files, update_metadata=update_metadata)
+                        publish=publish, no_files=no_files, update_metadata=update_metadata, data_type=data_type)
 
 def list_datasets(secrets, verbose=False):
     with open(secrets) as f:
@@ -98,7 +98,7 @@ if __name__ == "__main__":
 
     argparser.add_argument("-P", "--publish", help="For Zenodo datasets, publish it and get the DOI", action="store_true")
     argparser.add_argument("--no-files", help="For Zenodo datasets, create the record but do not upload files", action="store_true")
-
+    argparser.add_argument("--data-type", help="For local dataset, data type must be specified", default="", type=str)
 
     args = argparser.parse_args()
 
@@ -127,4 +127,4 @@ if __name__ == "__main__":
         generate_dataset(args.dataset_id, service, tstart, tend, args.secrets, log, format=args.format,
                          verbose=args.verbose, erddap_config=args.erddap, overwrite=args.overwrite,
                          resources=args.resources, local=args.local, publish=args.publish, limit=args.limit,
-                         no_files=args.no_files, update_metadata=args.update_metadata)
+                         no_files=args.no_files, update_metadata=args.update_metadata, data_type=args.data_type)

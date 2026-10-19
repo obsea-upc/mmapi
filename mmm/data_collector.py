@@ -230,13 +230,11 @@ class DataCollector(LoggerSuperclass):
         self.debug(f"database-defined time coverage {db_start} to {db_end} (took {time.time() - init:.03f} secs)")
         return db_start, db_end
 
-    def add_local_dataset(self, conf: dict, time_start: pd.Timestamp, time_end: pd.Timestamp):
+    def add_local_dataset(self, conf: dict, time_start: pd.Timestamp, time_end: pd.Timestamp, data_type: str):
         if not time_start or not time_end:
-            self.error("Local datasets MUST have a time range!", exception=True)
+            self.error("Local datasets MUST have a time range!", exception=ValueError)
 
-        data_type = find_first(conf, target="dataType")
-        if not data_type:
-            self.error("Could not find data type!", exception=True)
+        assert data_type in mmapi_data_types, f"Data type must be set to one of {mmapi_data_types}, got '{data_type}'"
 
         resource = {
             "id": "local_files",
@@ -244,9 +242,8 @@ class DataCollector(LoggerSuperclass):
             "format": "csv",
             "host": "localhost",
             "path": "./",
-            "dataType": "files"
+            "dataType": data_type
         }
-        rich.print(conf["export"])
         conf["export"]["local"] = {"resources": [resource]}
         self.info("Creating local dataset")
         return conf
@@ -256,7 +253,7 @@ class DataCollector(LoggerSuperclass):
     def generate_dataset(self, dataset: str | dict, service_name: str, time_start: pd.Timestamp|str = "",
                          time_end: pd.Timestamp|str = "", fmt: str = "", overwrite=False, erddap_config=False,
                          secrets: dict=None, resources: dict = None, local=False, publish=False,
-                         limit:int = 0, no_files=False, update_metadata=False) -> List[DatasetObject,]:
+                         limit:int = 0, no_files=False, update_metadata=False, data_type="") -> List[DatasetObject,]:
         """
 
         :param dataset: dataset_id or dataset configuration dict
@@ -287,7 +284,7 @@ class DataCollector(LoggerSuperclass):
 
         self.info(f"=====> Creating dataset {GRN}{dataset_id} {RST} <=====")
         if service_name == "local":  # Force local dataset!
-            conf = self.add_local_dataset(conf, time_start, time_end)
+            conf = self.add_local_dataset(conf, time_start, time_end, data_type)
         else:
             assert service_name in conf["export"].keys(), f"Dataset {dataset_id} doesn't have export service '{service_name}'"
 
@@ -562,6 +559,8 @@ class DataCollector(LoggerSuperclass):
 
         query += ";"
         datastream_ids = self.sta.list_from_query(query)
+        if len(datastream_ids) == 0:
+            self.error("No datastreams found!", exception=ValueError)
 
         # Step 2: Query for data, all queries should return ALL possible column types, regardless if they are empty
         # timestamp, time_end, depth, value, qc_flag, parameters, variable, sensor_id, platform_id, foi
@@ -697,6 +696,10 @@ class DataCollector(LoggerSuperclass):
         # DataFrame columns: timestamp, depth, value, qc_flag, time_end, parameters, variable, sensor_id, platform_id, foi
         df = df[["timestamp", "depth", "latitude", "longitude", "value", "qc_flag", "variable", "sensor_id", "platform_id"]]
         df = pivot_dataframe(df, pivot_cols=["value", "qc_flag"])
+
+        if "DEPTH" in df.columns:
+            self.warning("Moving DEPTH column to DEPH!")
+            df = df.rename(columns={"DEPTH": "DEPH", "DEPTH_QC": "DEPH_QC"})
         return df.set_index("timestamp")
 
     def dataframe_from_sta_profiles(self, conf: dict, resource: dict, station_ids: list, sensor_ids: list, time_start: pd.Timestamp = None,
@@ -794,6 +797,7 @@ class DataCollector(LoggerSuperclass):
         self.info(msg)
         metadata = self.metadata_harmonizer_conf(conf)
         df = self.dataframe_from_sta(conf, conf["@stations"], conf["@sensors"], resource, time_start=time_start, time_end=time_end, limit=limit)
+
         df = df_netcdf_normalization(df)  # Ensure we have correct strings
         if df.empty:
             self.warning(f"ALL dataframes from {time_start} to {time_end} are empty!, skipping")
@@ -1020,19 +1024,24 @@ class DataCollector(LoggerSuperclass):
             var_subset = dataset["@variables"]
 
         # Let's create a dict where key=varname, value=units
-        variable_units = {}
+        variable_metadata = {}  # "TEMP": {"units": "degC", "comment": "some text"} text is optional
         for sensor in sensors:
             for var in sensor["variables"]:
                 varname = var["@variables"]
                 units = var["@units"]
+                comment = var.get("comment", "")  # optional comment
                 if var_subset and not varname in var_subset:
                     self.debug(f"Excluding variable '{varname}', subset={var_subset}")
-                elif varname not in variable_units.keys():
+                elif varname not in variable_metadata.keys():
                     self.debug(f"Adding {varname}")
-                    variable_units[varname] = units
+                    variable_metadata[varname] =  {"units": units}
+
                 else: # variable already added, so make sure that units are the same
-                    registered = variable_units[varname]
+                    registered = variable_metadata[varname]["units"]
                     assert units == registered, f"Units for '{varname}' not consistent! '{units}' != '{registered}'"
+
+                if comment and "comment" not in variable_metadata[varname].keys():
+                    variable_metadata[varname]["comment"] = comment
 
         # Using first station to get owner
         station = self.mc.get_document("stations", dataset["@stations"][0])
@@ -1126,17 +1135,26 @@ class DataCollector(LoggerSuperclass):
                 "sensor_type_uri": sensor["instrumentType"]["definition"]
             }
 
-        for variable_id, units_id in variable_units.items():
+        for variable_id, units_id in variable_metadata.items():
             variable = self.mc.get_document("variables", variable_id)
+
+
+            units_id = variable_metadata[variable_id]["units"]
             units = self.mc.get_document("units", units_id)
             self.debug(f"   getting {variable_id} with units {units['symbol']}")
             varname = variable_id.replace("-", "_").replace(" ", "_")
+            std_name = variable["standard_name"]
+            if varname == "DEPTH":
+                # hardcoded force from DEPTH to DEPH 'depth' reserved for nominal depth and DEPH for real measurements
+                varname = "DEPH"
+                std_name = ""
+
             if variable["type"] == "environmental":
                 meta["variables"][varname] = {
                     "long_name": variable["description"],
                     "sdn_parameter_uri": variable["definition"],
                     "sdn_uom_uri": units["definition"],
-                    "standard_name": variable["standard_name"],
+                    "standard_name": std_name
                 }
             elif variable["type"] in ["biological", "biodiversity"]:
                 raise ValueError(f"Unimplemented! {variable_id}")
@@ -1149,6 +1167,9 @@ class DataCollector(LoggerSuperclass):
                 }
             else:
                 raise ValueError(f"Type '{variable['type']}' not valid!")
+
+            if "comment" in variable_metadata[variable_id]:
+                meta["variables"][varname]["comment"] = variable_metadata[variable_id]["comment"]
 
 
         for station_id in dataset["@stations"]:
