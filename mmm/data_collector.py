@@ -1119,7 +1119,8 @@ class DataCollector(LoggerSuperclass):
             sensor_id = sensor["#id"].replace("-", "_")
             self.debug(f"Assuming sensor '{sensor_id}' is mounted_on_seafloor_structure")
 
-            if sensor["instrumentType"]["label"] == "cameras":
+            labels = [it["label"] for it in sensor["instrumentType"]]
+            if "cameras" in labels:
                 orientation = "horizontal"
             else:
                 orientation = "upward"
@@ -1132,7 +1133,7 @@ class DataCollector(LoggerSuperclass):
                 "sensor_orientation": orientation,
                 "sdn_instrument_uri": sensor["model"]["definition"],
                 "sensor_manufacturer_uri": sensor["manufacturer"]["definition"],
-                "sensor_type_uri": sensor["instrumentType"]["definition"]
+                "sensor_type_uri": [it["definition"] for it in sensor["instrumentType"]]
             }
 
         for variable_id, units_id in variable_metadata.items():

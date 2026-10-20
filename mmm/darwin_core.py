@@ -260,8 +260,8 @@ class DarwinCoreArchive(LoggerSuperclass):
                 "id": camera_event,
                 "measurementType": "Instrument type",
                 "measurementTypeID": "",
-                "measurementValue": sensor["instrumentType"]["label"],
-                "measurementValueID": sensor["instrumentType"]["definition"]
+                "measurementValue": ", ".join(a["label"] for a in sensor["instrumentType"]),
+                "measurementValueID": ", ".join(a["definition"] for a in sensor["instrumentType"]),
             })
             # instrument model
             emofs.append({

@@ -27,6 +27,7 @@ __string_list__ = {
 
 __label_definition = {
     "type": "object",
+    "additionalProperties": False,
     "properties": {
         "definition": {"type": "string"},
         "label": {"type": "string"}
@@ -50,7 +51,7 @@ mmapi_data_types = [
     # others
     "files",  # arbitrary file-based data, such as audio, pictures or video.
     "detections",  # event detections based from other data. An example is fish detections from a picture
-    "json"  # JSOn object, such as the output of an AI algorithm, i.e. a list of detected objects by inference
+    "json"  # JSON object, such as the output of an AI algorithm, i.e. a list of detected objects by inference
 ]
 
 __data_types__ = {
@@ -254,7 +255,10 @@ __sensors = {
         "shortName": {"type": "string"},
         "longName": {"type": "string"},
         "serialNumber": {"type": "string"},
-        "instrumentType": __label_definition,
+        "instrumentType": {
+            "type": "array",
+            "items": __label_definition,
+        },
         "model": __label_definition,
         "manufacturer": __label_definition,
         "contacts": __contacts_with_roles__(__device_roles__),

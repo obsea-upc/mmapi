@@ -237,7 +237,8 @@ class ZabbixUpdater(LoggerSuperclass):
                     "status": str(int(active)),
                     "groups":  [{"groupid": station_host_groupid}],
                     "tags": [
-                        {"tag": "instrumentType", "value": sensor["instrumentType"]["label"]}
+                        # use the first instrument type as label
+                        {"tag": "instrumentType", "value": sensor["instrumentType"][0]["label"]}
                     ],
                 }
                 self.info(f"Registering host={GRN}'{sensor_id}'{RST} with enabled={active}")
